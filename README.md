@@ -22,35 +22,6 @@ Music Score Assistant is an innovative project designed to revolutionize music a
 
 The fundamental principle of Music Score Assistant is to transform the visual experience of reading a musical score into a rich combination of tactile (vibration) and auditory (sound) sensations.
 
-1. Score Export (MuseScore Plugin):
-A custom-developed MuseScore 3.x plugin serves as the initial entry point. Once activated, it exports the currently open musical score as a MusicXML file. This file is then seamlessly passed to a local web application for processing.
-
-
-2.
-Music Score Assistant
-✨ Introduction
-Music Score Assistant is an innovative project designed to revolutionize music accessibility for visually impaired individuals. By leveraging tactile and auditory feedback, it allows users to experience and interact with musical scores in a unique, multi-sensory way, enabling them to "read" and play music simultaneously without relying on visual cues.
-
-💡 Key Features
-Real-time Beat Feedback: Mobile devices and an ESP32 prototype vibrate to indicate tempo beats. The first beat of each measure receives distinct feedback for clear orientation.
-
-Dynamic BPM-Based Vibration: The ESP32 prototype automatically adjusts vibration intensity and pattern in real-time, directly reflecting tempo (BPM) changes within the musical score.
-
-Tactile and Auditory Note Communication: Musical notes are converted into vibrations and auditory feedback (via the ESP32's DAC), communicating pitch and duration in real-time.
-
-MuseScore Integration: A custom MuseScore 3.x plugin efficiently extracts score data (MusicXML) directly from the editor.
-
-Web Interface with Local File Support: Utilizes the powerful AlphaTab.js library to process MusicXML/XML files, handle playback, and facilitate communication. It supports both URL-specified files and local uploads.
-
-Robust Multi-Device BLE Communication: Connects to multiple ESP32 prototypes via WebBluetooth, employing a sophisticated queueing system to ensure reliable and ordered transmission of vibration and note data.
-
-Cross-Device Compatibility: Also connects to mobile devices via WebSockets for versatile feedback delivery, including haptic vibrations and on-screen textual note descriptions.
-
-Comprehensive Data Flow: A robust architecture ensures seamless data transmission from score creation to multi-sensory output.
-
-⚙️ How It Works: A Detailed Overview
-The fundamental principle of Music Score Assistant is to transform the visual experience of reading a musical score into a rich combination of tactile (vibration) and auditory (sound) sensations.
-
 Score Export (MuseScore Plugin):
 A custom-developed MuseScore 3.x plugin serves as the initial entry point. Once activated, it exports the currently open musical score as a MusicXML file. This file is then seamlessly passed to a local web application for processing.
 
