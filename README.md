@@ -27,8 +27,6 @@ A custom-developed MuseScore 3.x plugin serves as the initial entry point. Once 
 
 
 2.
-Here's the README.md in English, incorporating details from the provided files and previous discussions, ready to be pasted on GitHub:
-
 Music Score Assistant
 ✨ Introduction
 Music Score Assistant is an innovative project designed to revolutionize music accessibility for visually impaired individuals. By leveraging tactile and auditory feedback, it allows users to experience and interact with musical scores in a unique, multi-sensory way, enabling them to "read" and play music simultaneously without relying on visual cues.
