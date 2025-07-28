@@ -639,6 +639,80 @@ class VibrationCharacteristicCallbacks : public BLECharacteristicCallbacks {
   }
 };
 ```
+##🚀 Execution Tutorial
+This tutorial will guide you through deploying and running the Music Score Assistant project locally.
 
 
+### Prerequisites
+Ensure you have the following software and hardware ready:
+
+  - MuseScore 3: Music notation software.
+
+  - Docker and Docker Compose: For containerizing the web application and WebSocket server.
+
+  - Free Ports: Ensure ports 8000 and 8080 are available on your local machine.
+
+  - ESP32 MCU: The microcontroller for the prototype device.
+
+  - Required Modules: Vibration module, audio amplifier module, 3.5mm audio jack module.
+
+  - Arduino IDE: For compiling and flashing the ESP32 firmware.
+
+## Repository Setup
+
+### 1.Clone the Repository: Navigate to your preferred directory (e.g., ~/Documents/Musescore 3/Plugins if you intend to keep it alongside other MuseScore plugins) and clone the project:
+
+```bash
+$ cd ~/Documents/Musescore\ 3/Plugins # Example path, adjust as needed
+$ git clone https://github.com/MikeCillo/MusicScoreAssistant.git
+```
+Note: The project's previous name was esp32-prototype-Bluetooth-protocol, ensure you clone MusicScoreAssistant. If you have already cloned and renamed locally, you are fine.
+
+
+### 2.Build
+
+#### 2.1 Build Docker Environment: 
+Navidate to the root of the cloned MusicScoreAssistant directory and build the Docker images:
+
+```bash
+$ cd MusicScoreAssistant
+$ docker-compose build
+```
+
+#### 2.2 Build and Flash ESP32 Firmware:
+
+  - Open the ESP32 firmware project (Esp32_Firmware.ino) in Arduino IDE.
+
+  - Compile the code and upload it to your microcontroller.
+
+  - Refer to the specific readme guide within the ESP32 folder (if available) for detailed hardware assembly and flashing instructions.
+
+Then, power on your ESP32 device.
+
+
+# Running on Other Platforms
+
+
+### For Windows, Linux, or manual execution:
+
+#### 1. Start Docker Container: Navigate to the MusicScoreAssistant directory and start the Docker services in detached mode:
+
+```bash
+$ cd MusicScoreAssistant
+$ docker-compose up -d
+```
+#### 2. Power on ESP32: Ensure your ESP32 device is powered on.
+
+
+
+
+
+
+## 🤝 Contribution
+This project welcomes contributions, suggestions, and feedback. Feel free to open issues or submit pull requests on the GitHub repository.
+
+
+
+## 📄 Citation
+Credits to CoderLine: AlphaTab is a powerful cross-platform music notation and guitar tablature rendering library, central to this project's functionality. It enables loading and displaying musical scores from various data sources, including Guitar Pro files and its built-in markup language, alphaTex.
 
