@@ -1,37 +1,47 @@
-//verimmDAI1234567
-// load elements
+// main.js
+
+// Load elements from the DOM
 const wrapper = document.querySelector(".at-wrap");
 const main = wrapper.querySelector(".at-main");
-const urlParams = new URLSearchParams(window.location.search);
+const urlParams = new URL(window.location.href).searchParams;
 const urlFileName = urlParams.get("filename");
-let connectedBleDevices = new Map(); // Questa crea la mappa vuota per i dispositivi
+let connectedBleDevices = new Map();
 let lastNoteSentTimestamp = 0;
-const MIN_NOTE_INTERVAL_MS = 100; // Intervallo minimo in ms tra invii di note diverse. Prova con 100ms.
-                                 // Se hai ancora problemi, potresti aumentarlo (es. 150 o 200).
-let lastSentNoteValue = null; // Per tenere traccia dell'ultima nota inviata (frequenza o 0)
+const MIN_NOTE_INTERVAL_MS = 0; // Minimum interval between note sends in milliseconds
+let lastSentNoteValue = null;
 
+// --- VARIABLES FOR DYNAMIC BPM 
+let lastCalculatedPeriodMs = -1; // Tracks the last calculated and sent vibration period
+let tempoMapManual = []; // Map that will contain { tickStart: number, periodMs: number }
 
-// initialize alphatab
+// Initialize alphatab
 const settings = {
-  file: urlFileName ?? "/file.xml",
+  file: urlFileName ?? "/file.xml", // Default file 
   player: {
     enablePlayer: true,
     enableCursor: true,
     enableUserInteraction: true,
-    soundFont: "/dist/soundfont/sonivox.sf2",
+    soundFont: "/dist/soundfont/sonivox.sf2", 
     scrollElement: wrapper.querySelector(".at-viewport"),
   },
 };
 let api = new alphaTab.AlphaTabApi(main, settings);
-let timeSignaturePauses = [];
+let timeSignaturePauses = []; // Still used by metronomeWorker for beat logic
 let metronomeWorker = null;
-api.masterVolume = 1;
+api.masterVolume = 1; //AlphaTab's master volume
 
+// Get file input element and hide if a file is specified in the URL
 const inputElement = document.getElementById("input-file");
 if (urlFileName) {
   document.getElementById("custom-input-file").style.display = "none";
 }
+// Add event listener for file uploads
 inputElement.addEventListener("change", onUploadedFile, false);
+
+/**
+ * Handles the event when a user uploads a file.
+ * Reads the uploaded file as an ArrayBuffer and loads it into AlphaTab.
+ */
 function onUploadedFile() {
   const file = this.files[0];
   let reader = new FileReader();
@@ -44,13 +54,13 @@ function onUploadedFile() {
 
 //----------- BLE LOGIC ------------
 
-//Setup buttons bluetooth
+// Setup Bluetooth buttons and UUIDs
 const connectButton = document.querySelector(".connect");
 const disconnectButton = document.querySelector(".disconnect");
-const deviceName = 'ESP32'; // Il nome che i tuoi ESP32 usano per farsi trovare
-const bleService = '19b10000-e8f2-537e-4f6c-d104768a1214'; // L'UUID del servizio principale sui tuoi ESP32
-const vibrationCharacteristicUUID = '19b10002-e8f2-537e-4f6c-d104768a1214'; // L'UUID della caratteristica per la vibrazione
-const notesCharacteristicUUID = '39114440-f153-414b-9ca8-cd739acad81c'; // L'UUID della caratteristica per le note
+const deviceName = 'ESP32'; // Name of the target BLE device
+const bleService = '19b10000-e8f2-537e-4f6c-d104768a1214'; // BLE Service UUID
+const vibrationCharacteristicUUID = '19b10002-e8f2-537e-4f6c-d104768a1214'; // Characteristic UUID for vibration control
+const notesCharacteristicUUID = '39114440-f153-414b-9ca8-cd739acad81c'; // Characteristic UUID for note/frequency data
 
 // Connect Button (search for BLE Devices only if BLE is available)
 connectButton.addEventListener("click", (event) => {
@@ -62,38 +72,41 @@ connectButton.addEventListener("click", (event) => {
 // Disconnect Button
 disconnectButton.addEventListener("click", disconnectDevice);
 
-//Check if the browser supports bluetooth web api
+/**
+ * Checks if the Web Bluetooth API is available in the current browser.
+ * @returns {boolean} True if Web Bluetooth is enabled, false otherwise.
+ */
 function isWebBluetoothEnabled() {
   if (!navigator.bluetooth) {
     console.log("Web Bluetooth API is not available in this browser!");
     window.alert("Web Bluetooth API is not available in this browser!");
     return false;
   }
-
-  // console.log('Web Bluetooth API supported in this browser.');
-  // window.alert("Web Bluetooth API supported in this browser.");
   return true;
 }
 
+/**
+ * Initiates the connection process to a BLE device.
+ * Requests a device, connects to its GATT server, and retrieves the necessary characteristics.
+ */
 function connectToDevice() {
-  console.log("Inizializzazione connessione Bluetooth...");
+  console.log("Initializing Bluetooth connection...");
   let deviceInstance;
   let gattServerInstance;
 
   navigator.bluetooth
-    .requestDevice({
-      filters: [{ name: deviceName  },
-        { name: "ALDO" },
-        { name: "GIOVANNI" },
-        { name: "GIACOMINO" }],
-      optionalServices: [bleService],
-    })
+  .requestDevice({
+    filters: [{ services: [bleService] }], // Filter for devices advertising our service
+    optionalServices: [bleService], // Request access to the service
+  })
     .then((device) => {
       deviceInstance = device;
-      console.log("Dispositivo selezionato:", deviceInstance.name, "(ID:", deviceInstance.id, ")");
+      console.log("Device selected:", deviceInstance.name, "(ID:", deviceInstance.id, ")");
+      // Check if the device is already connected
       if (connectedBleDevices.has(deviceInstance.id) && connectedBleDevices.get(deviceInstance.id).connected) {
-        throw new Error("Dispositivo già connesso.");
+        throw new Error("Device already connected.");
       }
+      // Add event listener for disconnection
       deviceInstance.addEventListener("gattserverdisconnected", onDisconnected);
       return deviceInstance.gatt.connect();
     })
@@ -102,20 +115,23 @@ function connectToDevice() {
       return gattServerInstance.getPrimaryService(bleService);
     })
     .then((service) => {
-      if (!service) throw new Error("Servizio primario non trovato.");
+      if (!service) throw new Error("Primary service not found.");
+      // Get both vibration and notes characteristics in parallel
       return Promise.all([
-        service.getCharacteristic(vibrationCharacteristicUUID).catch(err => { console.error("Errore ottenimento VibrationChar:", err); return null; }),
-        service.getCharacteristic(notesCharacteristicUUID).catch(err => { console.error("Errore ottenimento NotesChar:", err); return null; }),
+        service.getCharacteristic(vibrationCharacteristicUUID).catch(err => { console.error("Error getting Vibration Characteristic:", err); return null; }),
+        service.getCharacteristic(notesCharacteristicUUID).catch(err => { console.error("Error getting Notes Characteristic:", err); return null; }),
         Promise.resolve(service),
         Promise.resolve(gattServerInstance)
       ]);
     })
     .then(([vibrationCharInstance, notesCharInstance, serviceInstance, resolvedGattServer]) => {
+      // Check if essential characteristics were found
       if (!vibrationCharInstance || !notesCharInstance) {
         if (resolvedGattServer && resolvedGattServer.connected) resolvedGattServer.disconnect();
-        throw new Error("Caratteristiche essenziali non trovate.");
+        throw new Error("Essential characteristics (Vibration or Notes) not found. Ensure firmware is correct.");
       }
       
+      // Store device information in the map
       const deviceInfo = {
         id: deviceInstance.id,
         name: deviceInstance.name,
@@ -124,241 +140,264 @@ function connectToDevice() {
         vibrationChar: vibrationCharInstance,
         notesChar: notesCharInstance,
         connected: true,
-        isProcessingVibrationQueue: false, // Flag per la coda delle vibrazioni
-        isProcessingNotesQueue: false,     // Flag per la coda delle note
-        vibrationQueue: [],                // Coda per i comandi di vibrazione
-        notesQueue: []                     // Coda per i comandi delle note
+        isProcessingVibrationQueue: false,
+        isProcessingNotesQueue: false,
+        vibrationQueue: [],
+        notesQueue: []
       };
 
       connectedBleDevices.set(deviceInstance.id, deviceInfo);
-      console.log("Dispositivo aggiunto alla lista:", deviceInfo.name, ". Dispositivi totali:", connectedBleDevices.size);
+      console.log("Device added to list:", deviceInfo.name, ". Total devices:", connectedBleDevices.size);
     })
     .catch((error) => {
-      console.error("Errore durante il processo di connessione per " + (deviceInstance ? deviceInstance.name : "un dispositivo") + ":", error.message);
+      console.error("Error during connection process for " + (deviceInstance ? deviceInstance.name : "a device") + ":", error.message);
       if (deviceInstance) deviceInstance.removeEventListener("gattserverdisconnected", onDisconnected);
     });
 }
 
 /**
- * Gestisce l'evento di disconnessione imprevista di un dispositivo.
+ * Handles the device disconnection event.
+ * Updates the device's connection status and clears its queues.
+ * If all devices are disconnected, it pauses AlphaTab playback and stops the metronome worker.
+ * @param {Event} event - The GATT server disconnected event.
  */
 function onDisconnected(event) {
   const disconnectedDevice = event.target;
-  console.warn("DISCONNESSO: Il dispositivo", disconnectedDevice.name, "(ID:", disconnectedDevice.id, ") si è disconnesso.");
+  console.warn("DISCONNECTED: Device", disconnectedDevice.name, "(ID:", disconnectedDevice.id, ") has disconnected.");
 
   if (connectedBleDevices.has(disconnectedDevice.id)) {
     const deviceInfo = connectedBleDevices.get(disconnectedDevice.id);
     deviceInfo.connected = false;
     deviceInfo.isProcessingVibrationQueue = false;
     deviceInfo.isProcessingNotesQueue = false;
-    deviceInfo.vibrationQueue = []; // Svuota le code alla disconnessione
+    deviceInfo.vibrationQueue = [];
     deviceInfo.notesQueue = [];
-    console.log("Stato e code del dispositivo", disconnectedDevice.name, "resettati.");
+    console.log("Device status and queues for", disconnectedDevice.name, "reset.");
   }
 
   let stillConnectedCount = 0;
   connectedBleDevices.forEach(dev => {
     if (dev.connected) stillConnectedCount++;
   });
+  // If no devices are connected and AlphaTab is playing, pause it.
   if (stillConnectedCount === 0 && typeof api !== 'undefined' && api && api.playerState === alphaTab.synth.PlayerState.Playing) {
-    console.log("Tutti i dispositivi sono disconnessi. Messa in pausa della riproduzione.");
+    console.log("All devices disconnected. Pausing playback.");
     if (typeof metronomeWorker !== 'undefined' && metronomeWorker) {
-        metronomeWorker.terminate();
+        metronomeWorker.postMessage({ type: 'stop' }); // Send stop message to worker
+        metronomeWorker.terminate(); // Terminate the worker
         metronomeWorker = null;
     }
     api.playPause();
+    // Clear visual loggers (if they exist)
     if (typeof noteLogger !== 'undefined' && noteLogger) noteLogger.innerHTML = "";
     if (typeof beatLogger !== 'undefined' && beatLogger) beatLogger.innerHTML = "";
   }
 }
 
 /**
- * Disconnette tutti i dispositivi BLE attualmente connessi.
+ * Disconnects all currently connected BLE devices.
+ * Clears the map of connected devices and pauses AlphaTab playback.
  */
 function disconnectDevice() {
-  console.log("Tentativo di disconnettere tutti i dispositivi...");
+  console.log("Attempting to disconnect all devices...");
   connectedBleDevices.forEach((deviceInfo, deviceId) => {
     if (deviceInfo.server && deviceInfo.server.connected) {
-      deviceInfo.server.disconnect(); // L'evento onDisconnected gestirà il cleanup
+      deviceInfo.server.disconnect();
     }
   });
-  connectedBleDevices.clear(); // Pulisce la mappa
-  console.log("Mappa dei dispositivi connessi svuotata.");
+  connectedBleDevices.clear();
+  console.log("Connected devices map cleared.");
 
+  // If AlphaTab is playing, pause it.
   if (typeof api !== 'undefined' && api && typeof api.playPause === 'function' && api.playerState === alphaTab.synth.PlayerState.Playing) {
-    console.log("Messa in pausa della riproduzione di AlphaTab.");
+    console.log("Pausing AlphaTab playback.");
     api.playPause();
   }
+  // Clear visual loggers (if they exist)
   if (typeof noteLogger !== 'undefined' && noteLogger) {
     noteLogger.innerHTML = "";
   }
   if (typeof beatLogger !== 'undefined' && beatLogger) {
     beatLogger.innerHTML = "";
   }
+  // Terminate the metronome worker
   if (typeof metronomeWorker !== 'undefined' && metronomeWorker) {
-    console.log("Terminazione del metronomeWorker.");
-    metronomeWorker.terminate();
+    console.log("Terminating metronomeWorker.");
+    metronomeWorker.postMessage({ type: 'stop' }); // Send stop message to worker
+    metronomeWorker.terminate(); // Terminate the worker
     metronomeWorker = null;
   }
 }
 
-
-// Convesion table
+// MIDI to Frequency conversion map for notes
 const conversion = {
-  48: 130.81,
-  49: 138.59,
-  50: 146.83,
-  51: 155.56,
-  52: 164.81,
-  53: 174.61,
-  54: 185.0,
-  55: 196.0,
-  56: 207.65,
-  57: 220.0,
-  58: 233.08,
-  59: 246.94,
-  60: 261.63,
-  61: 277.18,
-  62: 293.67,
-  63: 311.13,
-  64: 329.63,
-  65: 349.23,
-  66: 369.99,
-  67: 392.0,
-  68: 415.3,
-  69: 440.0,
-  70: 466.16,
-  71: 493.88,
-  72: 523.25,
-  73: 554.37,
-  74: 587.33,
-  75: 622.25,
-  76: 659.36,
-  77: 689.46,
-  78: 739.99,
-  79: 783.99,
-  80: 830.61,
-  81: 880.0,
-  82: 932.33,
-  83: 987.77,
+  48: 130.81, 49: 138.59, 50: 146.83, 51: 155.56, 52: 164.81, 53: 174.61, 54: 185.0, 55: 196.0,
+  56: 207.65, 57: 220.0, 58: 233.08, 59: 246.94, 60: 261.63, 61: 277.18, 62: 293.67, 63: 311.13,
+  64: 329.63, 65: 349.23, 66: 369.99, 67: 392.0, 68: 415.3, 69: 440.0, 70: 466.16, 71: 493.88,
+  72: 523.25, 73: 554.37, 74: 587.33, 75: 622.25, 76: 659.36, 77: 698.46,
+  78: 739.99, 79: 783.99, 80: 830.61, 81: 880.0, 82: 932.33, 83: 987.77,
 };
 
-//Convert MIDI to Frequency
+/**
+ * Converts a MIDI note number to its corresponding frequency in Hz.
+ * Clamps the input to the range 48-83.
+ * @param {number} midi - The MIDI note number.
+ * @returns {number} The frequency in Hz.
+ */
 function convertMidiToFrequency(midi) {
-  if (midi < 48) {
-    return conversion[midi] || 48; //Return 48 if under the scale
-  }
-  if (midi > 83) {
-    return conversion[midi] || 83; // Return 83 if upper the scale
-  }
+  if (midi < 48) { return conversion[48]; }
+  if (midi > 83) { return conversion[83]; }
   return conversion[midi];
 }
 
-function sendValueToBleDevices(value) {
-    if (!connectedBleDevices || connectedBleDevices.size === 0) {
+/**
+ * Sends a vibration period (in milliseconds) to a specific BLE device.
+ * Adds the command to the device's vibration queue and initiates processing.
+ * @param {object} deviceInfo - The device information object.
+ * @param {number} periodMs - The vibration period in milliseconds (0 for stop).
+ */
+async function sendVibrationPeriodToBleDevices(deviceInfo, periodMs) {
+    if (!deviceInfo || !deviceInfo.connected || !deviceInfo.vibrationChar) {
+        console.warn(`Device ${deviceInfo ? deviceInfo.name : 'unknown'} not ready for vibration.`);
         return;
     }
 
-    const command = {
-        value: value,
-        timestamp: Date.now() // Aggiungiamo un timestamp al momento della creazione del comando
-    };
+    const data = new Uint16Array([periodMs]); // Create a 16-bit unsigned integer array
+    const buffer = new Uint8Array(data.buffer); // Get the underlying byte buffer
+    const payload = new Uint8Array([buffer[0], buffer[1]]); // Extract the two bytes
+
+    const timestamp = Date.now();
+    deviceInfo.vibrationQueue.push({ buffer: payload, timestamp: timestamp });
+    processVibrationQueue(deviceInfo); // Start processing the queue
+}
+
+/**
+ * Sends a note command (frequency value or 0 for stop) to all connected BLE devices.
+ * Adds the command to each device's notes queue and initiates processing.
+ * @param {number} value - The frequency value to send, or 0 to stop the note.
+ */
+function sendNoteCommandToBleDevices(value) {
+    if (!connectedBleDevices || connectedBleDevices.size === 0) {
+        console.log("No BLE devices connected.");
+        return;
+    }
+
+    const timestamp = Date.now();
 
     connectedBleDevices.forEach((deviceInfo) => {
-        if (!deviceInfo.connected) return;
+        if (!deviceInfo.connected) {
+            console.log(`Device ${deviceInfo.name} not connected, skipping note send.`);
+            return;
+        }
 
-        // Determina la coda corretta
-        if (value === 1) { // Comando per la vibrazione
-            deviceInfo.vibrationQueue.push(command);
-            processVibrationQueue(deviceInfo);
-        } else { // Comando per le note (frequenza o STOP 0)
-            const lastNoteInQueue = deviceInfo.notesQueue[deviceInfo.notesQueue.length - 1];
-            // Ottimizzazione: non aggiungere comandi di nota duplicati consecutivi.
-            if (!lastNoteInQueue || lastNoteInQueue.value !== value) {
-                deviceInfo.notesQueue.push(command);
-            }
-            processNotesQueue(deviceInfo);
+        let dataBuffer;
+        if (value === 0) {
+            dataBuffer = new Uint8Array([0]); // Send single byte 0 for stop
+        } else {
+            const lsb = value & 0xFF; // Least significant byte
+            const msb = (value >> 8) & 0xFF; // Most significant byte
+            dataBuffer = new Uint8Array([lsb, msb]); // Send two bytes for frequency
+        }
+
+        // Check for duplicate commands to avoid redundant writes
+        const lastNoteInQueue = deviceInfo.notesQueue[deviceInfo.notesQueue.length - 1];
+        const isDuplicate = lastNoteInQueue &&
+                            lastNoteInQueue.buffer.byteLength === dataBuffer.byteLength &&
+                            Array.from(lastNoteInQueue.buffer).every((byte, i) => byte === dataBuffer[i]);
+
+        if (!isDuplicate) {
+            deviceInfo.notesQueue.push({ buffer: dataBuffer, timestamp: timestamp });
+            processNotesQueue(deviceInfo); // Process the queue for this device
+        } else {
+            // console.log(`DEBUG: Duplicate note (${value}), not added to queue for ${deviceInfo.name}.`);
         }
     });
 }
 
-
 /**
- * Processa la coda dei comandi per la caratteristica delle note di un dispositivo.
- * Invia un comando alla volta, loggando la latenza e la dimensione della coda.
- * @param {object} deviceInfo - L'oggetto del dispositivo dalla mappa connectedBleDevices.
+ * Processes the notes queue for a specific BLE device.
+ * Sends the next command in the queue via `writeValueWithoutResponse`.
+ * Handles errors (e.g., network issues leading to disconnection).
+ * @param {object} deviceInfo - The device information object.
  */
 function processNotesQueue(deviceInfo) {
+    // If already processing, queue is empty, or device is disconnected, do nothing
     if (deviceInfo.isProcessingNotesQueue || deviceInfo.notesQueue.length === 0 || !deviceInfo.connected) {
-        return; // Non fare nulla se stiamo già inviando, la coda è vuota o il device è disconnesso
+        return; 
     }
 
-    deviceInfo.isProcessingNotesQueue = true; // Blocca la coda
-    const command = deviceInfo.notesQueue.shift(); // Prendi il primo comando (che è un oggetto)
-    const valueToSend = command.value;
-    const data = new Uint16Array([valueToSend]);
-    
-    // Calcola la latenza: il tempo trascorso da quando il comando è stato creato
-    const latency = Date.now() - command.timestamp;
-    
-    // Logga le informazioni di performance PRIMA dell'invio
-    console.log(`CODA NOTE per ${deviceInfo.name}: Dimensione=${deviceInfo.notesQueue.length}, Latenza=${latency}ms`);
+    deviceInfo.isProcessingNotesQueue = true; // Set flag to prevent re-entry
+    const command = deviceInfo.notesQueue.shift(); // Get the next command from the queue
+    const dataToSend = command.buffer; // The data (Uint8Array) to send
 
-    deviceInfo.notesChar.writeValueWithoutResponse(data)
+    const latency = Date.now() - command.timestamp; // Calculate latency from when command was queued
+
+    console.log(`NOTES QUEUE for ${deviceInfo.name}: Size=${deviceInfo.notesQueue.length}, Latency=${latency}ms, Payload=${Array.from(dataToSend).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+
+    deviceInfo.notesChar.writeValueWithoutResponse(dataToSend) // Send data without waiting for response
         .then(() => {
-            // Log di successo opzionale, i log di performance sono più importanti ora
-            // console.log(`LOG CODA: Nota (${valueToSend}) inviata (no-resp) a ${deviceInfo.name}`);
+            // console.log(`LOG QUEUE: Note sent (no-resp) to ${deviceInfo.name}`);
         })
         .catch(error => {
-            console.error(`LOG CODA: Errore invio Nota (${valueToSend}) a ${deviceInfo.name}:`, error);
+            console.error(`LOG QUEUE: Error sending Note to ${deviceInfo.name}:`, error);
+            // If a network error occurs, assume device disconnected and clear queue
             if (error.name === 'NetworkError') {
-                deviceInfo.connected = false; 
-                deviceInfo.notesQueue = [];   
+                deviceInfo.connected = false;
+                deviceInfo.notesQueue = [];
+                console.error(`Device ${deviceInfo.name} disconnected due to network error during note send.`);
             }
         })
         .finally(() => {
-            deviceInfo.isProcessingNotesQueue = false; 
+            deviceInfo.isProcessingNotesQueue = false; // Reset flag
+            // Process next command in queue after a short delay (or immediately)
             setTimeout(() => processNotesQueue(deviceInfo), 0);
         });
 }
 
 /**
- * Processa la coda dei comandi per la caratteristica delle vibrazioni di un dispositivo.
- * Invia un comando alla volta, loggando la latenza e la dimensione della coda.
- * @param {object} deviceInfo - L'oggetto del dispositivo dalla mappa connectedBleDevices.
+ * Processes the vibration queue for a specific BLE device.
+ * Sends the next command in the queue via `writeValueWithoutResponse`.
+ * Handles errors (e.g., network issues leading to disconnection).
+ * @param {object} deviceInfo - The device information object.
  */
 function processVibrationQueue(deviceInfo) {
-    if (deviceInfo.isProcessingVibrationQueue || deviceInfo.vibrationQueue.length === 0 || !deviceInfo.connected) {
-        return;
-    }
+  // If already processing, queue is empty, or device is disconnected, do nothing
+  if (deviceInfo.isProcessingVibrationQueue || deviceInfo.vibrationQueue.length === 0 || !deviceInfo.connected) {
+      return;
+  }
 
-    deviceInfo.isProcessingVibrationQueue = true;
-    const command = deviceInfo.vibrationQueue.shift(); // Prendi il primo comando (oggetto)
-    const valueToSend = command.value;
-    const data = new Uint16Array([valueToSend]);
-    
-    const latency = Date.now() - command.timestamp;
-    
-    console.log(`CODA VIBRAZIONE per ${deviceInfo.name}: Dimensione=${deviceInfo.vibrationQueue.length}, Latenza=${latency}ms`);
+  deviceInfo.isProcessingVibrationQueue = true; // Set flag to prevent re-entry
+  const command = deviceInfo.vibrationQueue.shift(); // Get the next command from the queue
+  const dataToSend = command.buffer; // The data (Uint8Array) to send
 
-    deviceInfo.vibrationChar.writeValueWithResponse(data)
-        .then(() => {
-            // console.log(`LOG CODA: Vibrazione (${valueToSend}) inviata a ${deviceInfo.name}`);
-        })
-        .catch(error => {
-            console.error(`LOG CODA: Errore invio Vibrazione (${valueToSend}) a ${deviceInfo.name}:`, error);
-            if (error.name === 'NetworkError') {
-                deviceInfo.connected = false;
-                deviceInfo.vibrationQueue = [];
-            }
-        })
-        .finally(() => {
-            deviceInfo.isProcessingVibrationQueue = false;
-            setTimeout(() => processVibrationQueue(deviceInfo), 0); // Prova a processare il prossimo
-        });
+  const latency = Date.now() - command.timestamp; // Calculate latency from when command was queued
+
+  console.log(`VIBRATION QUEUE for ${deviceInfo.name}: Size=${deviceInfo.vibrationQueue.length}, Latency=${latency}ms, Payload=${Array.from(dataToSend).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+
+  deviceInfo.vibrationChar.writeValueWithoutResponse(dataToSend) // Send data without waiting for response
+      .then(() => {
+          // console.log(`LOG QUEUE: Vibration sent to ${deviceInfo.name}`);
+      })
+      .catch(error => {
+          console.error(`LOG QUEUE: Error sending Vibration to ${deviceInfo.name}:`, error);
+          // If a network error occurs, assume device disconnected and clear queue
+          if (error.name === 'NetworkError') {
+              deviceInfo.connected = false;
+              deviceInfo.vibrationQueue = [];
+              console.error(`Device ${deviceInfo.name} disconnected due to network error during vibration send.`);
+          }
+      })
+      .finally(() => {
+          deviceInfo.isProcessingVibrationQueue = false; // Reset flag
+          // Process next command in queue after a short delay (or immediately)
+          setTimeout(() => processVibrationQueue(deviceInfo), 0);
+      });
 }
 
-
+/**
+ * Returns the current date and time in a formatted string.
+ * @returns {string} The formatted date and time string.
+ */
 function getDateTime() {
   var currentdate = new Date();
   var day = ("00" + currentdate.getDate()).slice(-2);
@@ -387,7 +426,7 @@ function getDateTime() {
 
 //---------- END BLE LOGIC --------------
 
-// overlay logic
+// Overlay logic for rendering status
 const overlay = wrapper.querySelector(".at-overlay");
 api.renderStarted.on(() => {
   overlay.style.display = "flex";
@@ -396,31 +435,68 @@ api.renderFinished.on(() => {
   overlay.style.display = "none";
 });
 
-// track selector
+// Track selector
+/**
+ * Creates a DOM element for a track item in the track list.
+ * @param {object} track - The AlphaTab track object.
+ * @returns {HTMLElement} The created track item element.
+ */
 function createTrackItem(track) {
   const trackItem = document
     .querySelector("#at-track-template")
     .content.cloneNode(true).firstElementChild;
+
+  // Insert track name
   trackItem.querySelector(".at-track-name").innerText = track.name;
+
+  // Dynamic FA icon choice based on track name
+  const iconEl = trackItem.querySelector(".at-track-icon");
+  if (iconEl) {
+    const iconClass = getIconClassForTrack(track.name);
+    iconEl.className = `at-track-icon fa ${iconClass}`;
+  }
+
+  // Associate the track data with the element
   trackItem.track = track;
+
+  // Click to render only that track
   trackItem.onclick = (e) => {
     e.stopPropagation();
     api.renderTracks([track]);
   };
+
   return trackItem;
 }
 
+/**
+ * Pre-calculates BPM changes for each section of the score and populates `tempoMapManual`.
+ * Also prepares `timeSignaturePauses` for the metronome worker.
+ * @param {object} score - The AlphaTab score object.
+ */
 function createMetronome(score) {
-  let tempoAutomation = 0;
+  timeSignaturePauses = []; // Reset list for metronomeWorker beats
+  tempoMapManual = []; // Reset manual tempo map
+
+  let lastTempo = 0; // Initialize with a value that will force the first update
+
+  // Iterate over all masterBars to extract effective tempo changes
   score.masterBars.forEach((bar) => {
-    if (
-      bar.tempoAutomation != null &&
-      tempoAutomation != bar.tempoAutomation.value
-    ) {
-      tempoAutomation = bar.tempoAutomation.value;
+    let currentBpm = bar.tempoAutomation ? bar.tempoAutomation.value : lastTempo;
+    if (currentBpm === 0) currentBpm = 120; // Fallback: avoid division by zero, use a default BPM
+
+    // If tempo has changed compared to the last bar, record the new period
+    if (currentBpm !== lastTempo) {
+      const periodMs = Math.round(60000 / currentBpm); // Calculate period in milliseconds (60000ms/min / BPM)
+      tempoMapManual.push({
+        tickStart: bar.start, // Start position in ticks of this bar/section
+        periodMs: periodMs,
+      });
+      lastTempo = currentBpm; // Update the last recorded tempo
     }
+
+    // This part is for the metronomeWorker (JS timing), not directly for BLE BPM
     let barDuration =
-      parseFloat(60 / parseInt(tempoAutomation)) *
+      parseFloat(60 / parseInt(currentBpm)) * // Use the bar's currentBpm
       parseInt(bar.timeSignatureNumerator);
     if (parseInt(bar.timeSignatureNumerator) == 0) return;
     let beatsWaitTime = barDuration / parseInt(bar.timeSignatureNumerator);
@@ -442,25 +518,29 @@ function createMetronome(score) {
       }
     }
   });
+
+  // Add a final point to ensure vibration stops at the end of the song
+  // or if there are no more specific tempo changes
+  tempoMapManual.push({
+      tickStart: score.duration, // Total score duration
+      periodMs: 0 // Period 0 to stop vibration
+  });
+  console.log("Manual Tempo Map generated:", tempoMapManual);
 }
 
 const trackList = wrapper.querySelector(".at-track-list");
 api.scoreLoaded.on((score) => {
-  // clear items
   trackList.innerHTML = "";
-  // generate a track item for all tracks of the score
   score.tracks.forEach((track) => {
     trackList.appendChild(createTrackItem(track));
   });
-  createMetronome(score);
+  createMetronome(score); // Recreate tempo map when a new score is loaded
 });
 api.renderStarted.on(() => {
-  // collect tracks being rendered
   const tracks = new Map();
   api.tracks.forEach((t) => {
     tracks.set(t.index, t);
   });
-  // mark the item as active or not
   const trackItems = trackList.querySelectorAll(".at-track");
   trackItems.forEach((trackItem) => {
     if (tracks.has(trackItem.track.index)) {
@@ -503,7 +583,7 @@ layout.onchange = () => {
   api.render();
 };
 
-// player loading indicator
+// Player loading indicator
 const playerIndicator = wrapper.querySelector(
   ".at-controls .at-player-progress"
 );
@@ -515,79 +595,167 @@ api.playerReady.on(() => {
   playerIndicator.style.display = "none";
 });
 
-// main player controls
+// Main player controls
+/**
+ * Gets the index of the current master bar based on the given tick position.
+ * @param {number} currentTick - The current tick position in the score.
+ * @returns {number} The index of the current master bar.
+ */
 function getCurrentBarIndex(currentTick) {
-  return api.score.masterBars
-    .map((el) => el.start <= currentTick)
-    .lastIndexOf(true);
+  // Find the index of the current bar based on the tick
+  for (let i = api.score.masterBars.length - 1; i >= 0; i--) {
+      if (api.score.masterBars[i].start <= currentTick) {
+          return i;
+      }
+  }
+  return 0; // If not found, return the first bar
 }
+
+// Visual metronome and note loggers (removed as per request, but variables still declared for safety)
 const beatSignaler = document.getElementById("beat-signaler");
 const beatLogger = document.getElementById("beat-logger");
 const noteLogger = document.getElementById("note-logger");
+
+/**
+ * Highlights the beat signaler with a specific color (function kept for reference, but not used by original request).
+ * @param {string} color - The color to set for the signaler.
+ */
 function highlightBeat(color) {
-  beatSignaler.style.color = color;
-  beatSignaler.style.display = "block";
-  setTimeout(function () {
-    beatSignaler.style.display = "none";
-  }, 100);
+  // This function is no longer actively used as per the user's request to remove visual beat indicators.
+  // It's kept here for completeness if there's a need to re-introduce visual feedback later.
+  if (beatSignaler) {
+    beatSignaler.style.color = color;
+    beatSignaler.style.display = "block";
+    setTimeout(function () {
+      beatSignaler.style.display = "none";
+    }, 100);
+  }
 }
+
 const playPause = wrapper.querySelector(".at-controls .at-player-play-pause");
 const stop = wrapper.querySelector(".at-controls .at-player-stop");
+
+// --- PLAY/PAUSE AND METRONOME MANAGEMENT LOGIC (MODIFIED) ---
 playPause.onclick = (e) => {
   if (e.target.classList.contains("disabled")) {
     return;
   }
   if (e.target.classList.contains("fa-play")) {
-    let currentBarIndex = getCurrentBarIndex(api.tickPosition);
-    api.tickPosition = api.score.masterBars[currentBarIndex].start;
+    // Terminate existing worker if present
+    if (metronomeWorker) {
+      metronomeWorker.postMessage({ type: 'stop' }); // Send stop message to worker
+      metronomeWorker.terminate(); // Terminate the worker
+      metronomeWorker = null;
+    }
+
+    // Reset calculated period state to force the first send
+    lastCalculatedPeriodMs = -1;
+
+    // Initialize and start the metronome worker
     metronomeWorker = new Worker("/js/metronomeWorker.js");
-    beatLogger.innerHTML = "";
+    // Clear visual beat logger (if it exists)
+    if (beatLogger) beatLogger.innerHTML = "";
+    // Send 'start' message to the worker with necessary data
     metronomeWorker.postMessage({
-      startIndex: currentBarIndex,
-      pauses: timeSignaturePauses,
+      type: 'start',
+      startIndex: getCurrentBarIndex(api.tickPosition), // Initialize worker from current bar
+      pauses: timeSignaturePauses, // Pass beat timing information
     });
+    
+    // Handle messages from the metronome worker
     metronomeWorker.onmessage = function (message) {
-      //if (timeWebSocket.readyState != 1) return;
-      if (message.data.isFirstBeat) {
-        beatLogger.innerHTML = '<p style="color: green;">BEAT</p>';
-        //Send beat to the device
-        sendValueToBleDevices(1);
-        highlightBeat("green");
-      } else {
-        beatLogger.innerHTML += '<p style="color: red;">BEAT</p>';
-        //Send beat to the device
-        sendValueToBleDevices(1);
-        highlightBeat("red");
+      // Handle worker messages (for visual beats and BPM calculation)
+      if (message.data.type === 'finished') {
+          // Optional: worker has finished its beat sequence
+          console.log("MetronomeWorker has finished its sequence.");
+          return;
       }
-      /*timeWebSocket.send(
-        JSON.stringify({ isFirstBeat: message.data.isFirstBeat })
-      );*/
-      beatLogger.scrollTo(0, beatLogger.scrollHeight);
+
+     
+
+      // --- NEW LOGIC: CALCULATE AND SEND VIBRATION PERIOD HERE ---
+      // Only send vibration commands if BLE devices are connected and AlphaTab is playing
+      if (connectedBleDevices.size > 0 && api.playerState === alphaTab.synth.PlayerState.Playing) {
+          const currentTick = api.tickPosition; // Current position in ticks from AlphaTab
+          let newPeriodToSet = 0;
+
+          // Find the correct period based on the current tickPosition
+          // Iterate backwards through tempoMapManual to find the most recent tempo change
+          for (let i = tempoMapManual.length - 1; i >= 0; i--) {
+              if (currentTick >= tempoMapManual[i].tickStart) {
+                  newPeriodToSet = tempoMapManual[i].periodMs;
+                  break; // Found the most recent period, exit loop
+              }
+          }
+          
+          // If newPeriodToSet is 0, it means we are past the end or in an undefined tempo area,
+          // so vibration should stop.
+
+          // Send vibration command ONLY IF the period has changed
+          if (newPeriodToSet !== lastCalculatedPeriodMs) {
+              connectedBleDevices.forEach(deviceInfo => {
+                  if (deviceInfo.connected) {
+                      sendVibrationPeriodToBleDevices(deviceInfo, newPeriodToSet);
+                  }
+              });
+              lastCalculatedPeriodMs = newPeriodToSet;
+              console.log(`DEBUG: Metronome: Period updated to ${newPeriodToSet}ms (Tick: ${currentTick})`);
+          }
+      }
+      // --- END NEW LOGIC ---
     };
-    api.playPause();
+    api.playPause(); // Start AlphaTab playback
   } else if (e.target.classList.contains("fa-pause")) {
-    //Stop the device
-    sendValueToBleDevices(0);
-    api.playPause();
-    noteLogger.innerHTML = "";
-    beatLogger.innerHTML = "";
-    metronomeWorker.terminate();
+    // Stop the devices (note and buzz)
+    sendNoteCommandToBleDevices(0);
+
+    // Send stop command for vibration
+    connectedBleDevices.forEach(deviceInfo => {
+        if (deviceInfo.connected) {
+            sendVibrationPeriodToBleDevices(deviceInfo, 0);
+        }
+    });
+    lastCalculatedPeriodMs = 0; // Reset last calculated period
+
+    api.playPause(); // Pause AlphaTab playback
+    // Clear visual loggers (if they exist)
+    if (noteLogger) noteLogger.innerHTML = "";
+    if (beatLogger) beatLogger.innerHTML = "";
+    // Terminate the metronome worker
+    if (metronomeWorker) {
+      metronomeWorker.postMessage({ type: 'stop' }); // Send stop message to worker
+      metronomeWorker.terminate(); // Terminate the worker
+      metronomeWorker = null;
+    }
   }
 };
+
+// --- STOP LOGIC (MODIFIED) ---
 stop.onclick = (e) => {
   if (e.target.classList.contains("disabled")) {
     return;
   }
+  // Terminate the metronome worker
   if (metronomeWorker) {
-    // Aggiunto controllo per sicurezza
-    metronomeWorker.terminate();
-    metronomeWorker = null; // Resetta per la prossima pressione di play
+    metronomeWorker.postMessage({ type: 'stop' }); // Send stop message to worker
+    metronomeWorker.terminate(); // Terminate the worker
+    metronomeWorker = null;
   }
-  noteLogger.innerHTML = "";
-  beatLogger.innerHTML = "";
-  api.stop();
-  sendValueToBleDevices(0); 
+  // Clear visual loggers (if they exist)
+  if (noteLogger) noteLogger.innerHTML = "";
+  if (beatLogger) beatLogger.innerHTML = "";
+  api.stop(); // Stop AlphaTab playback
+  sendNoteCommandToBleDevices(0); // Send stop note command
+
+  // Send stop command for vibration to all connected devices
+  connectedBleDevices.forEach(deviceInfo => {
+    if (deviceInfo.connected) {
+        sendVibrationPeriodToBleDevices(deviceInfo, 0);
+    }
+  });
+  lastCalculatedPeriodMs = 0; // Reset last calculated period
 };
+
 api.playerReady.on(() => {
   playPause.classList.remove("disabled");
   stop.classList.remove("disabled");
@@ -600,10 +768,24 @@ api.playerStateChanged.on((e) => {
   } else {
     icon.classList.remove("fa-pause");
     icon.classList.add("fa-play");
+    // Also stop vibration if playback stops on its own (e.g., end of song)
+    if (e.state === alphaTab.synth.PlayerState.Stopped || e.state === alphaTab.synth.PlayerState.Paused) {
+        connectedBleDevices.forEach(deviceInfo => {
+            if (deviceInfo.connected) {
+                sendVibrationPeriodToBleDevices(deviceInfo, 0);
+            }
+        });
+        lastCalculatedPeriodMs = 0;
+    }
   }
 });
 
-// song position
+// Song position display
+/**
+ * Formats a duration in milliseconds into a "MM:SS" string.
+ * @param {number} milliseconds - The duration in milliseconds.
+ * @returns {string} The formatted duration string.
+ */
 function formatDuration(milliseconds) {
   let seconds = milliseconds / 1000;
   const minutes = (seconds / 60) | 0;
@@ -616,7 +798,6 @@ function formatDuration(milliseconds) {
 const songPosition = wrapper.querySelector(".at-song-position");
 let previousTime = -1;
 api.playerPositionChanged.on((e) => {
-  // reduce number of UI updates to second changes.
   const currentSeconds = (e.currentTime / 1000) | 0;
   if (currentSeconds == previousTime) {
     return;
@@ -627,78 +808,122 @@ api.playerPositionChanged.on((e) => {
 });
 
 api.activeBeatsChanged.on((args) => {
-  noteLogger.innerHTML = ""; 
-  if (args.activeBeats.length > 0 && args.activeBeats[0].noteValueLookup.size > 0) {
-    const currentNotes = Array.from(args.activeBeats[0].noteValueLookup.keys());
-    const duration = args.activeBeats[0].duration; // Prendi la durata dal primo beat attivo
-    for (let i = 0; i < currentNotes.length; i++) {
-        noteLogger.innerHTML += '<p style="text-align: center;">Note ' + currentNotes[i] + " (" + duration + ")</p>";
-    }
-  }
-  noteLogger.scrollTo(0, noteLogger.scrollHeight);
-  // Fine logica UI per noteLogger
-
-  let valueToPlay; // Questa variabile conterrà la frequenza della nota da suonare, o 0 per fermare.
+  
+  let valueToPlay;
 
   if (args.activeBeats.length > 0 && args.activeBeats[0].noteValueLookup.size > 0) {
     const noteValues = Array.from(args.activeBeats[0].noteValueLookup.keys());
     
-    
+    // Ensure the first note value is a valid number before conversion
     if (typeof noteValues[0] === 'number' && !isNaN(noteValues[0])) {
       valueToPlay = convertMidiToFrequency(noteValues[0]);
-      // Controlla se convertMidiToFrequency ha restituito un numero valido
+      // If conversion results in invalid frequency, set to 0 (stop)
       if (typeof valueToPlay !== 'number' || isNaN(valueToPlay)) {
-        console.warn("DEBUG: Frequenza non valida da convertMidiToFrequency per MIDI:", noteValues[0], ". Imposto STOP (0).");
-        valueToPlay = 0; // Default a 0 (STOP) se la conversione fallisce o restituisce NaN
+        console.warn("DEBUG: Invalid frequency from convertMidiToFrequency for MIDI:", noteValues[0], ". Setting STOP (0).");
+        valueToPlay = 0; 
       }
     } else {
-      // Questo caso (noteValues[0] non è un numero valido) dovrebbe essere raro se .size > 0,
-      // ma per sicurezza impostiamo a STOP.
-      console.warn("DEBUG: noteValues[0] non è un numero valido:", noteValues[0], ". Imposto STOP (0).");
+      console.warn("DEBUG: noteValues[0] is not a valid number:", noteValues[0], ". Setting STOP (0).");
       valueToPlay = 0;
     }
   } else {
-    // Non ci sono note attive in questo "beat", quindi inviamo un comando di STOP (0).
-    valueToPlay = 0;
+    valueToPlay = 0; // No active notes, send stop command
   }
 
-  // --- Logica di Throttling e Invio ---
   const now = Date.now();
 
-  // Invia il comando solo se valueToPlay è un numero valido (frequenza o 0)
   if (typeof valueToPlay === 'number' && !isNaN(valueToPlay)) {
-    
-    // Caso 1: È un comando di STOP (0) per le note
-    if (valueToPlay === 0) {
-      if (lastSentNoteValue !== 0) { // Invia STOP solo se l'ultima nota inviata non era già uno STOP
-        // console.log("DEBUG: Invio comando STOP NOTE (0) via BLE.");
-        sendValueToBleDevices(0); // Chiama la tua funzione unificata per inviare 0
-        lastSentNoteValue = 0;      // Aggiorna l'ultima nota inviata
-        lastNoteSentTimestamp = now; // Aggiorna anche il timestamp per gli STOP
+    if (valueToPlay === 0) { 
+      // If it's a STOP command, send it only if the last command wasn't already STOP
+      if (lastSentNoteValue !== 0) { 
+        console.log("DEBUG: Sending STOP NOTE (0) via BLE.");
+        sendNoteCommandToBleDevices(0);
+        lastSentNoteValue = 0; // Update last sent note
+        lastNoteSentTimestamp = now; // Update timestamp
+      }
+    } else if (valueToPlay > 0) { 
+      if (now - lastNoteSentTimestamp > MIN_NOTE_INTERVAL_MS) { 
+        console.log("DEBUG: Sending NOTE (" + valueToPlay + ") via BLE.");
+        sendNoteCommandToBleDevices(valueToPlay);
+        lastSentNoteValue = valueToPlay; // Update last sent note
+        lastNoteSentTimestamp = now; // Update timestamp
       } else {
-        // console.log("DEBUG: Nota già su STOP (0), non invio di nuovo.");
+       
       }
     }
-    // Caso 2: È una frequenza di nota (quindi valueToPlay > 0, perché valueToPlay === 1 è per i beat)
-    else if (valueToPlay > 1) { 
-      if (valueToPlay !== lastSentNoteValue) { // È una nota *diversa* dalla precedente?
-        if (now - lastNoteSentTimestamp > MIN_NOTE_INTERVAL_MS) { // È trascorso abbastanza tempo?
-          // console.log("DEBUG: Invio NUOVA NOTA (" + valueToPlay + ") via BLE.");
-          sendValueToBleDevices(valueToPlay);
-          lastSentNoteValue = valueToPlay;
-          lastNoteSentTimestamp = now;
-        } else {
-          console.log("LOG THROTTLE: NUOVA Nota (" + valueToPlay + ") saltata da throttle JS. Intervallo: " + (now - lastNoteSentTimestamp) + "ms. Min richiesto: " + MIN_NOTE_INTERVAL_MS + "ms.");
-        }
-      } else {
-        // console.log("DEBUG: Stessa nota (" + valueToPlay + ") di prima, non invio di nuovo.");
-      }
-    }
-    // Non gestiamo valueToPlay === 1 qui, perché si presume che activeBeatsChanged
-    // riguardi solo note musicali (frequenze) o lo stop delle note (0).
-    // Il valore 1 per i beat è gestito da metronomeWorker.onmessage.
-
   } else {
-    console.warn("DEBUG: activeBeatsChanged - Tentativo di inviare un valore non numerico/NaN per la nota, saltato. Valore originale:", valueToPlay);
+    console.warn("DEBUG: activeBeatsChanged - Attempted to send a non-numeric/NaN value for note, skipped. Original value:", valueToPlay);
   }
+});
+
+// Count-in feature control // COUNTDOWN Before music start
+const countIn = wrapper.querySelector('.at-controls .at-count-in');
+countIn.onclick = () => {
+  countIn.classList.toggle('active');
+  if (countIn.classList.contains('active')) {
+    api.countInVolume = 1; // Enable count-in volume
+  } else {
+    api.countInVolume = 0; // Disable count-in volume
+  }
+};
+
+// Metronome feature control
+const metronome = wrapper.querySelector('.at-controls .at-metronome');
+metronome.onclick = () => {
+  metronome.classList.toggle('active');
+  
+  // Enable or disable metronome sound
+  if (metronome.classList.contains('active')) {
+    api.metronomeVolume = 1;
+  } else {
+    api.metronomeVolume = 0;
+  }
+};
+
+// Map of names to Font Awesome classes for track icons
+/**
+ * Returns the appropriate Font Awesome icon class based on the track name.
+ * @param {string} name - The name of the track.
+ * @returns {string} The Font Awesome icon class.
+ */
+function getIconClassForTrack(name) {
+  const lower = name.toLowerCase();
+
+  if (lower.includes("piano")) return "fa-music"; // Using fa-music as piano is not a direct FA icon
+  if (lower.includes("guitar")) return "fa-guitar";
+  if (lower.includes("drum")) return "fa-drum";
+  if (lower.includes("violin")) return "fa-violin";
+  if (lower.includes("bass")) return "fa-bass-guitar";
+  if (lower.includes("vocal") || lower.includes("voice")) return "fa-microphone";
+  if (lower.includes("flute")) return "fa-flute";
+  if (lower.includes("sax")) return "fa-saxophone";
+  if (lower.includes("trumpet")) return "fa-trumpet";
+  // fallback default
+  return "fa-music";
+}
+
+const trackList2 = wrapper.querySelector(".at-track-list"); 
+api.scoreLoaded.on((score) => {
+  // clear items
+  trackList.innerHTML = "";
+  // generate a track item for all tracks of the score
+  score.tracks.forEach((track) => {
+    trackList.appendChild(createTrackItem(track));
+  });
+});
+api.renderStarted.on(() => {
+  // collect tracks being rendered
+  const tracks = new Map();
+  api.tracks.forEach((t) => {
+    tracks.set(t.index, t);
+  });
+  // mark the item as active or not
+  const trackItems = trackList.querySelectorAll(".at-track");
+  trackItems.forEach((trackItem) => {
+    if (tracks.has(trackItem.track.index)) {
+      trackItem.classList.add("active");
+    } else {
+      trackItem.classList.remove("active");
+    }
+  });
 });
