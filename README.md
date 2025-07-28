@@ -22,10 +22,10 @@ Music Score Assistant is an innovative project designed to revolutionize music a
 
 The fundamental principle of Music Score Assistant is to transform the visual experience of reading a musical score into a rich combination of tactile (vibration) and auditory (sound) sensations.
 
-Score Export (MuseScore Plugin):
+### 1.Score Export (MuseScore Plugin):
 A custom-developed MuseScore 3.x plugin serves as the initial entry point. Once activated, it exports the currently open musical score as a MusicXML file. This file is then seamlessly passed to a local web application for processing.
 
-Web Application (AlphaTab & Communication Hub):
+### 2.Web Application (AlphaTab & Communication Hub):
 The web application hosts an instance of the AlphaTab.js library, which parses and "plays" the MusicXML/XML score.
 
   - Tempo Beats and Dynamic BPM: The application precisely calculates tempo beats and dynamically adapts to BPM changes within the score. This information is crucial for controlling vibration patterns.
@@ -35,7 +35,7 @@ The web application hosts an instance of the AlphaTab.js library, which parses a
   - Communication Protocol:
         - WebBluetooth: For more direct and precise tactile/auditory feedback, data is also sent to one or more ESP32 prototypes via WebBluetooth. This communication is managed through dedicated queues for each connected device, ensuring robust and ordered delivery of commands for both vibrations (BPM periods) and notes (frequencies).
 
-3.ESP32 Prototype Device:
+### 3.ESP32 Prototype Device:
 This custom hardware device is specifically designed to receive Bluetooth Low Energy (BLE) commands from the web application. It translates incoming data into physical outputs:
 
   - Dynamic Vibration: For tempo beats, with vibration periods dynamically adjusted based on the received BPM.
