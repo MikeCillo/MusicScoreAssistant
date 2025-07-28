@@ -1,9 +1,9 @@
-# Notes Sound Generator
+# Music Score Assistant
 
-##🎵Introduction
+## 🎵Introduction
 Music Score Assistant is an innovative project designed to revolutionize music accessibility for visually impaired individuals. By leveraging tactile and auditory feedback, it allows users to experience and interact with musical scores in a unique, multi-sensory way, enabling them to "read" and play music simultaneously without relying on visual cues.
 
-##💡 Key Features
+## 💡 Key Features
   - Real-time Beat Feedback: Mobile devices and an ESP32 prototype vibrate to indicate tempo beats. The first beat of each measure receives distinct feedback for clear orientation.
     
   - Dynamic BPM-Based Vibration: The ESP32 prototype automatically adjusts vibration intensity and pattern in real-time, directly reflecting tempo (BPM) changes within the musical score.
@@ -18,7 +18,7 @@ Music Score Assistant is an innovative project designed to revolutionize music a
 
   - Comprehensive Data Flow: A robust architecture ensures seamless data transmission from score creation to multi-sensory output.
 
-##⚙️ How It Works: A Detailed Overview
+## ⚙️ How It Works: A Detailed Overview
 
 The fundamental principle of Music Score Assistant is to transform the visual experience of reading a musical score into a rich combination of tactile (vibration) and auditory (sound) sensations.
 
@@ -43,7 +43,7 @@ This custom hardware device is specifically designed to receive Bluetooth Low En
   - Audible Notes: By converting MIDI note numbers into specific frequencies and playing them through a Digital-to-Analog Converter (DAC) and an amplifier.
 
 
-##🛠️ Implementation Details
+## 🛠️ Implementation Details
 
 #MuseScore Plugin Side
 The primary function of the MuseScore plugin is to export the active score as MusicXML and then launch the web interface, passing the filename as a URL parameter.
