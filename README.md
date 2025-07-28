@@ -705,7 +705,7 @@ $ docker-compose up -d
 ```
 #### 2. Power on ESP32: Ensure your ESP32 device is powered on.
 
-
+#### 3. Open Web Interface: Open your web browser and go to **http://localhost:8000/** Once the page loads, click the "Connect" button to establish a connection with your ESP32 device.
 
 
 
