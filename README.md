@@ -45,7 +45,7 @@ This custom hardware device is specifically designed to receive Bluetooth Low En
 
 ## 🛠️ Implementation Details
 
-#MuseScore Plugin Side
+### MuseScore Plugin Side
 The primary function of the MuseScore plugin is to export the active score as MusicXML and then launch the web interface, passing the filename as a URL parameter.
 
 ```js
@@ -69,3 +69,4 @@ onRun: {
   var filename = "new-exported.musicxml";
   openGenerator(filePath, filename); // Executes the main logic on plugin startup
 }
+
