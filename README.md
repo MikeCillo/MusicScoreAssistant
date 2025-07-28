@@ -1,1 +1,1 @@
-# music-without-barriers
+# Music Score Assistant
